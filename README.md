@@ -1,11 +1,13 @@
 # Autonomous Crypto Trading Agent
 
-A modular, config-switchable crypto trading agent for MEXC. It combines a
-price-action **market-structure** parser (swing-based HH/HL/LH/LL) with a
-zero-shot **Chronos** time-series forecast, and only trades when both engines
-agree. Runs spot (long-only) or futures (long + short) from a single config
-flag, with a full simulated PnL ledger for dry-run validation before any real
-money is committed.
+A modular, config-switchable crypto trading agent for MEXC. It **assesses every
+signal first**, then opens the single path (long, short, or nothing) with the
+best expected value. Signals: price-action **market structure** (swing-based
+HH/HL/LH/LL), a zero-shot **Chronos** forecast, **momentum** (RSI + MACD),
+**sentiment** (Fear & Greed, plus optional news-ML), and a **volatility**
+regime veto. Runs spot (long-only) or futures (long + short) from a single
+config flag, with a full simulated PnL ledger for dry-run validation before any
+real money is committed.
 
 > **Reality check.** This is a tool, not a money printer. Most retail strategies
 > are net-negative after fees. Run it in `DRY_RUN` until the simulated equity
@@ -16,27 +18,39 @@ money is committed.
 
 ## How it decides
 
-1. **Market structure** (`core/structure.py`) — detects *confirmed* swing highs
-   and lows with a symmetric fractal window (no lookahead) and classifies the
-   trend as bullish, bearish, or consolidating.
-2. **Forecast bias** (`core/forecast.py`) — Amazon Chronos forecasts the median
-   terminal price over a short horizon and derives a directional bias against a
-   buffer `alpha`. Best used for higher-timeframe bias, not tick timing.
-3. **Congruence gate** (`core/strategy.py`) — an order fires only when structure
-   AND forecast point the same way. Bearish signals trade only when shorting is
-   enabled (futures); on spot they mean "go to cash".
-4. **Risk** (`core/risk.py`) — position size is solved from the stop distance so
+The agent assesses first, then trades the best path. Each signal provider
+returns a direction score `[-1,+1]`, a confidence `[0,1]`, and can raise a veto.
+
+1. **Signal providers** (`core/signals/`):
+   - `structure` — confirmed swing highs/lows (no lookahead) → trend.
+   - `forecast` — Amazon Chronos median path → directional bias.
+   - `momentum` — RSI + MACD histogram.
+   - `fear_greed` — free Crypto Fear & Greed Index (contrarian at extremes).
+   - `news_sentiment` — optional CryptoBERT/FinBERT over headlines (opt-in).
+   - `volatility` — ATR regime; vetoes trading when too chaotic.
+2. **Decision engine** (`core/decision.py`) — blends signals by configurable
+   weight × confidence into a composite view, converts it to a directional
+   probability, computes the **expected value of long vs short** net of
+   round-trip fees, and picks the higher-EV path only if it clears
+   `MIN_EXPECTED_VALUE` and `MIN_CONVICTION` and isn't vetoed. By default
+   structure must agree with the chosen direction (`REQUIRE_STRUCTURE_ALIGNMENT`).
+3. **Risk** (`core/risk.py`) — position size is solved from the stop distance so
    each trade risks a fixed fraction of equity, capped by budget. Bracket is
    1 : `REWARD_RISK_RATIO`.
-5. **Portfolio/ledger** (`core/portfolio.py`) — holds open-position state (no
+4. **Portfolio/ledger** (`core/portfolio.py`) — holds open-position state (no
    double entries) and, in dry-run, simulates fills, fees, slippage, and
    stop/target exits into SQLite with a running equity curve.
 
 ```
-market_data ─► structure ─┐
-                          ├─► strategy ─► risk ─► executor ─► portfolio (SQLite)
-market_data ─► forecast  ─┘
+              structure ┐
+              forecast  │
+market_data ─►momentum  ├─► DecisionEngine ─► risk ─► executor ─► portfolio (SQLite)
+              sentiment │      (weighted EV)
+              volatility┘   LONG / SHORT / FLAT
 ```
+
+Tune the mix in `.env`: `WEIGHT_STRUCTURE`, `WEIGHT_FORECAST`, `WEIGHT_MOMENTUM`,
+`WEIGHT_SENTIMENT`, `WEIGHT_NEWS`, plus `MIN_CONVICTION` / `MIN_EXPECTED_VALUE`.
 
 ## Setup
 

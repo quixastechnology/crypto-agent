@@ -13,11 +13,13 @@ import sys
 import time
 
 from config.settings import load_config
+from core.decision import DecisionEngine
 from core.executor import Executor
 from core.forecast import ForecastEngine
 from core.market_data import MarketData
 from core.portfolio import Portfolio
 from core.risk import RiskManager
+from core.signals import build_providers
 from core.strategy import Strategy
 
 logging.basicConfig(
@@ -43,7 +45,9 @@ def build_strategy(config) -> tuple[Strategy, Portfolio, MarketData]:
     risk = RiskManager(config)
     portfolio = Portfolio(config)
     executor = Executor(config, market, portfolio)
-    strategy = Strategy(config, market, forecast, risk, portfolio, executor)
+    engine = DecisionEngine(config, build_providers(config))
+    logger.info("Decision engine signals: %s", [p.name for p in engine.providers])
+    strategy = Strategy(config, market, forecast, risk, portfolio, executor, engine)
     return strategy, portfolio, market
 
 

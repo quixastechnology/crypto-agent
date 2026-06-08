@@ -15,12 +15,14 @@ import logging
 import sys
 
 from config.settings import load_config
+from core.decision import DecisionEngine
 from core.forecast import ForecastEngine
 from core.market_data import MarketData
 from core.portfolio import Portfolio
 from core.risk import RiskManager
-from core.structure import Structure, extract_market_structure
-from core.forecast import Bias
+from core.signals import build_providers
+from core.signals.base import MarketContext
+from core.structure import extract_market_structure
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 log = logging.getLogger("backtest")
@@ -37,6 +39,7 @@ def run(symbol: str, bars: int) -> None:
     forecast = ForecastEngine(config.chronos_model, config.forecast_horizon, config.forecast_alpha)
     risk = RiskManager(config)
     portfolio = Portfolio(config)
+    engine = DecisionEngine(config, build_providers(config))
 
     df = market.fetch_ohlcv(symbol, limit=bars)
     window = config.context_length
@@ -54,14 +57,12 @@ def run(symbol: str, bars: int) -> None:
             portfolio.check_exits(symbol, float(last["high"]), float(last["low"]), ts)
             continue
 
-        structure = extract_market_structure(slice_df, config.structure_window).state
+        structure = extract_market_structure(slice_df, config.structure_window)
         fc = forecast.predict_bias(slice_df)
-
-        side = None
-        if structure == Structure.BULLISH and fc.bias == Bias.BULLISH:
-            side = "buy"
-        elif structure == Structure.BEARISH and fc.bias == Bias.BEARISH and config.allow_shorts:
-            side = "sell"
+        ctx = MarketContext(symbol=symbol, df=slice_df, price=price,
+                            config=config, structure=structure, forecast=fc)
+        assessment = engine.assess(ctx)
+        side = {"LONG": "buy", "SHORT": "sell"}.get(assessment.action)
         if side is None:
             continue
 

@@ -5,3 +5,5 @@ python-dotenv>=1.0.0
 # Forecast layer (optional for structure-only/dry tests, required for live bias):
 torch>=2.2.0
 chronos-forecasting @ git+https://github.com/amazon-science/chronos-forecasting.git
+# Optional: news sentiment (only needed when ENABLE_NEWS_SENTIMENT=true):
+transformers>=4.40.0

@@ -47,6 +47,33 @@ class Config:
     taker_fee: float           # per-side taker fee fraction, e.g. 0.0005
     slippage: float            # assumed slippage per side, fraction
 
+    # --- Decision engine: signal weights ---
+    weight_structure: float
+    weight_forecast: float
+    weight_momentum: float
+    weight_volatility: float
+    weight_sentiment: float
+    weight_news: float
+    require_structure_alignment: bool   # structure gates trade direction
+    min_conviction: float               # min aggregate confidence to trade
+    min_expected_value: float           # min EV (fraction of price) to trade
+
+    # --- Momentum / volatility params ---
+    rsi_period: int
+    macd_fast: int
+    macd_slow: int
+    macd_signal: int
+    atr_period: int
+    atr_max_pct: float                  # ATR above this -> no-trade veto
+
+    # --- Sentiment ---
+    fear_greed_url: str
+    fear_greed_contrarian: bool
+    enable_news_sentiment: bool
+    news_model: str
+    news_rss_urls: list[str]
+    news_max_headlines: int
+
     # --- Loop ---
     poll_seconds: int
     db_path: str
@@ -84,6 +111,12 @@ def load_config() -> Config:
     symbols_raw = os.getenv("SYMBOLS", "BTC/USDT")
     symbols = [s.strip() for s in symbols_raw.split(",") if s.strip()]
 
+    news_rss = os.getenv(
+        "NEWS_RSS_URLS",
+        "https://www.coindesk.com/arc/outboundfeeds/rss/,https://cointelegraph.com/rss",
+    )
+    news_rss_urls = [u.strip() for u in news_rss.split(",") if u.strip()]
+
     return Config(
         api_key=os.getenv("MEXC_API_KEY", ""),
         api_secret=os.getenv("MEXC_API_SECRET", ""),
@@ -105,6 +138,27 @@ def load_config() -> Config:
         context_length=_get_int("CONTEXT_LENGTH", 200),
         taker_fee=_get_float("TAKER_FEE", 0.0005),
         slippage=_get_float("SLIPPAGE", 0.0005),
+        weight_structure=_get_float("WEIGHT_STRUCTURE", 0.30),
+        weight_forecast=_get_float("WEIGHT_FORECAST", 0.25),
+        weight_momentum=_get_float("WEIGHT_MOMENTUM", 0.20),
+        weight_volatility=_get_float("WEIGHT_VOLATILITY", 0.05),
+        weight_sentiment=_get_float("WEIGHT_SENTIMENT", 0.15),
+        weight_news=_get_float("WEIGHT_NEWS", 0.05),
+        require_structure_alignment=_get_bool("REQUIRE_STRUCTURE_ALIGNMENT", True),
+        min_conviction=_get_float("MIN_CONVICTION", 0.35),
+        min_expected_value=_get_float("MIN_EXPECTED_VALUE", 0.001),
+        rsi_period=_get_int("RSI_PERIOD", 14),
+        macd_fast=_get_int("MACD_FAST", 12),
+        macd_slow=_get_int("MACD_SLOW", 26),
+        macd_signal=_get_int("MACD_SIGNAL", 9),
+        atr_period=_get_int("ATR_PERIOD", 14),
+        atr_max_pct=_get_float("ATR_MAX_PCT", 0.05),
+        fear_greed_url=os.getenv("FEAR_GREED_URL", "https://api.alternative.me/fng/?limit=1"),
+        fear_greed_contrarian=_get_bool("FEAR_GREED_CONTRARIAN", True),
+        enable_news_sentiment=_get_bool("ENABLE_NEWS_SENTIMENT", False),
+        news_model=os.getenv("NEWS_MODEL", "ElKulako/cryptobert"),
+        news_rss_urls=news_rss_urls,
+        news_max_headlines=_get_int("NEWS_MAX_HEADLINES", 20),
         poll_seconds=_get_int("POLL_SECONDS", 900),
         db_path=os.getenv("DB_PATH", "crypto_agent.db"),
     )
