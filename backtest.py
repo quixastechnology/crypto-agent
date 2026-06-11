@@ -12,9 +12,12 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
+from analytics import compute_metrics, print_report
 from config.settings import load_config
+from core.strategy import _atr
 from core.decision import DecisionEngine
 from core.forecast import ForecastEngine
 from core.market_data import MarketData
@@ -33,6 +36,11 @@ def run(symbol: str, bars: int) -> None:
     config = load_config()
     config.trade_mode = "DRY_RUN"
     config.db_path = "backtest.db"
+    # Fresh ledger every run. The old version reloaded the last equity row and
+    # summed ALL historical trades, so a second run started from the previous
+    # run's equity and polluted every stat. Backtests must be reproducible.
+    if os.path.exists(config.db_path):
+        os.remove(config.db_path)
 
     market = MarketData(config)
     market.load_markets()
@@ -41,7 +49,7 @@ def run(symbol: str, bars: int) -> None:
     portfolio = Portfolio(config)
     engine = DecisionEngine(config, build_providers(config))
 
-    df = market.fetch_ohlcv(symbol, limit=bars)
+    df = market.fetch_ohlcv_paginated(symbol, total=bars)
     window = config.context_length
     cost_rate = config.taker_fee + config.slippage
 
@@ -58,7 +66,7 @@ def run(symbol: str, bars: int) -> None:
             continue
 
         structure = extract_market_structure(slice_df, config.structure_window)
-        fc = forecast.predict_bias(slice_df)
+        fc = forecast.predict_bias(slice_df) if config.weight_forecast > 0 else None
         ctx = MarketContext(symbol=symbol, df=slice_df, price=price,
                             config=config, structure=structure, forecast=fc)
         assessment = engine.assess(ctx)
@@ -66,23 +74,19 @@ def run(symbol: str, bars: int) -> None:
         if side is None:
             continue
 
-        bracket = risk.size_position(side, price, portfolio.equity)
+        atr = _atr(slice_df, config.atr_period) if config.use_atr_stops else None
+        bracket = risk.size_position(side, price, portfolio.equity, atr)
         if bracket is None:
             continue
         fill = price * (1 + config.slippage) if side == "buy" else price * (1 - config.slippage)
         bracket.entry = fill
-        bracket.stop_loss, bracket.take_profit = risk.bracket_levels(side, fill)
+        bracket.stop_loss, bracket.take_profit = risk.bracket_levels(side, fill, atr)
         portfolio.open_position(bracket, symbol, ts)
 
-    stats = portfolio.stats()
-    start_eq = config.initial_equity
-    ret = (stats["equity"] - start_eq) / start_eq * 100
-    log.info("-" * 50)
-    log.info("Trades: %d | Win rate: %.1f%% | Net PnL: %.4f USDT",
-             stats["trades"], stats["win_rate"] * 100, stats["net_pnl"])
-    log.info("Equity: %.4f -> %.4f (%.2f%%) | round-trip cost ~%.3f%%",
-             start_eq, stats["equity"], ret, cost_rate * 2 * 100)
     portfolio.close()
+    log.info("Round-trip cost assumption: ~%.3f%%", cost_rate * 2 * 100)
+    metrics = compute_metrics(config.db_path, initial_equity=config.initial_equity)
+    print_report(metrics)
 
 
 if __name__ == "__main__":

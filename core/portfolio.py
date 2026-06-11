@@ -123,6 +123,29 @@ class Portfolio:
         return net
 
     # --- simulation -----------------------------------------------------
+    def peek_exits(self, symbol: str, candle_high: float, candle_low: float) -> tuple[str, float] | None:
+        """Return (reason, exit_price) if the candle range crossed a bracket level.
+
+        Non-mutating: it does NOT close the ledger position. LIVE mode uses this
+        so the exchange order is sent first and the ledger is only closed after
+        the order succeeds. If both levels fall inside the candle we assume the
+        stop filled first (worst case).
+        """
+        pos = self.get_position(symbol)
+        if pos is None:
+            return None
+        if pos.side == "buy":
+            if candle_low <= pos.stop_loss:
+                return "STOP_LOSS", pos.stop_loss
+            if candle_high >= pos.take_profit:
+                return "TAKE_PROFIT", pos.take_profit
+        else:
+            if candle_high >= pos.stop_loss:
+                return "STOP_LOSS", pos.stop_loss
+            if candle_low <= pos.take_profit:
+                return "TAKE_PROFIT", pos.take_profit
+        return None
+
     def check_exits(self, symbol: str, candle_high: float, candle_low: float, ts: int) -> str | None:
         """In DRY_RUN, resolve stop/target hits against a candle's range.
 
@@ -156,6 +179,27 @@ class Portfolio:
     @property
     def equity(self) -> float:
         return self._equity
+
+    def open_positions_count(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) AS c FROM positions").fetchone()
+        return int(row["c"])
+
+    def realized_pnl_since(self, since_ts: int) -> float:
+        """Sum of net PnL for trades closed at or after since_ts (ms)."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(net_pnl), 0) AS s FROM trades WHERE closed_ts >= ?",
+            (since_ts,),
+        ).fetchone()
+        return float(row["s"])
+
+    def last_stop_ts(self, symbol: str) -> int | None:
+        """Timestamp (ms) of the most recent stop-loss exit on a symbol."""
+        row = self.conn.execute(
+            "SELECT closed_ts FROM trades WHERE symbol = ? AND reason = 'STOP_LOSS' "
+            "ORDER BY closed_ts DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        return int(row["closed_ts"]) if row else None
 
     def stats(self) -> dict:
         rows = self.conn.execute("SELECT net_pnl FROM trades").fetchall()

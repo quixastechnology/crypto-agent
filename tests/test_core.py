@@ -155,3 +155,67 @@ def test_portfolio_blocks_double_entry_and_resolves_stop():
         assert not pf.has_position("BTC/USDT")
         assert pf.equity < 10.0  # took a loss + fees
         pf.close()
+
+
+# --- New: guardrails, ATR stops, live-exit ordering, analytics ----------
+
+def test_peek_exits_does_not_mutate():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = _config(os.path.join(d, "t.db"))
+        pf = Portfolio(cfg)
+        pf.open_position(Bracket("buy", 100.0, 98.0, 105.0, 0.1, 10.0), "BTC/USDT", 1000)
+        hit = pf.peek_exits("BTC/USDT", candle_high=99.0, candle_low=97.0)
+        assert hit == ("STOP_LOSS", 98.0)
+        # Position must still be open: LIVE mode needs it to send the exchange order.
+        assert pf.has_position("BTC/USDT")
+        pf.close()
+
+
+def test_atr_stop_sizing_and_clamp():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = _config(os.path.join(d, "t.db"), use_atr_stops=True, atr_stop_mult=2.0,
+                      min_stop_pct=0.005, max_stop_pct=0.05)
+        risk = RiskManager(cfg)
+        # ATR 1.0 on entry 100 -> stop distance 2.0 (2%)
+        assert abs(risk.stop_distance(100.0, atr=1.0) - 2.0) < 1e-9
+        # Huge ATR clamps to max_stop_pct
+        assert abs(risk.stop_distance(100.0, atr=50.0) - 5.0) < 1e-9
+        # Tiny ATR clamps to min_stop_pct
+        assert abs(risk.stop_distance(100.0, atr=0.01) - 0.5) < 1e-9
+        # No ATR -> falls back to fixed pct
+        assert abs(risk.stop_distance(100.0, atr=None) - 100.0 * cfg.stop_loss_pct) < 1e-9
+
+
+def test_daily_loss_and_position_count_helpers():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = _config(os.path.join(d, "t.db"))
+        pf = Portfolio(cfg)
+        pf.open_position(Bracket("buy", 100.0, 98.0, 105.0, 0.1, 10.0), "BTC/USDT", 1000)
+        assert pf.open_positions_count() == 1
+        pf.close_position("BTC/USDT", 98.0, "STOP_LOSS", 2000)
+        assert pf.open_positions_count() == 0
+        assert pf.realized_pnl_since(0) < 0
+        assert pf.last_stop_ts("BTC/USDT") == 2000
+        pf.close()
+
+
+def test_analytics_metrics():
+    from analytics import compute_metrics
+    with tempfile.TemporaryDirectory() as d:
+        db = os.path.join(d, "t.db")
+        cfg = _config(db)
+        pf = Portfolio(cfg)
+        # One winner, one loser.
+        pf.open_position(Bracket("buy", 100.0, 98.0, 105.0, 0.1, 10.0), "BTC/USDT", 1000)
+        pf.close_position("BTC/USDT", 105.0, "TAKE_PROFIT", 2000)
+        pf.open_position(Bracket("buy", 100.0, 98.0, 105.0, 0.1, 10.0), "BTC/USDT", 3000)
+        pf.close_position("BTC/USDT", 98.0, "STOP_LOSS", 4000)
+        pf.close()
+        m = compute_metrics(db, initial_equity=cfg.initial_equity)
+        assert m["trades"] == 2
+        assert m["wins" if "wins" in m else "trades"]  # smoke
+        assert 0.0 < m["win_rate"] < 1.0
+        assert m["profit_factor"] > 1.0          # 0.5 win vs 0.2 loss gross
+        assert m["max_drawdown"] > 0.0
+        assert m["longest_losing_streak"] == 1
+        assert "STOP_LOSS" in m["by_reason"] and "TAKE_PROFIT" in m["by_reason"]

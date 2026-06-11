@@ -78,6 +78,15 @@ class Config:
     poll_seconds: int
     db_path: str
 
+    # --- Risk guardrails (defaults keep old configs working) ---
+    use_atr_stops: bool = False         # stop distance = ATR * atr_stop_mult instead of fixed pct
+    atr_stop_mult: float = 1.5
+    min_stop_pct: float = 0.005         # ATR stop clamped to [min, max] of price
+    max_stop_pct: float = 0.05
+    max_open_positions: int = 2         # across all symbols (crypto is one big correlated trade)
+    daily_max_loss_pct: float = 0.05    # realized daily loss >= this fraction of equity -> halt entries
+    cooldown_seconds: int = 3600        # no re-entry on a symbol this long after a stop-out
+
     derived: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -161,4 +170,11 @@ def load_config() -> Config:
         news_max_headlines=_get_int("NEWS_MAX_HEADLINES", 20),
         poll_seconds=_get_int("POLL_SECONDS", 900),
         db_path=os.getenv("DB_PATH", "crypto_agent.db"),
+        use_atr_stops=_get_bool("USE_ATR_STOPS", False),
+        atr_stop_mult=_get_float("ATR_STOP_MULT", 1.5),
+        min_stop_pct=_get_float("MIN_STOP_PCT", 0.005),
+        max_stop_pct=_get_float("MAX_STOP_PCT", 0.05),
+        max_open_positions=_get_int("MAX_OPEN_POSITIONS", 2),
+        daily_max_loss_pct=_get_float("DAILY_MAX_LOSS_PCT", 0.05),
+        cooldown_seconds=_get_int("COOLDOWN_SECONDS", 3600),
     )

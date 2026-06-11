@@ -43,6 +43,7 @@ class ForecastEngine:
         self.horizon = horizon
         self.alpha = alpha
         self._pipeline = None
+        self._unavailable = False  # set once if torch/chronos cannot be imported
 
     def _ensure_pipeline(self) -> None:
         if self._pipeline is not None:
@@ -60,11 +61,24 @@ class ForecastEngine:
             torch_dtype=torch.float32,
         )
 
-    def predict_bias(self, df: pd.DataFrame) -> ForecastResult:
-        """Forecast the median terminal price and derive a directional bias."""
-        import torch
+    def predict_bias(self, df: pd.DataFrame) -> ForecastResult | None:
+        """Forecast the median terminal price and derive a directional bias.
 
-        self._ensure_pipeline()
+        Returns None when torch/chronos are not installed, so the rest of the
+        system (structure-only mode promised in the README) keeps working —
+        the ForecastSignal already treats None as 'forecast unavailable'.
+        """
+        if self._unavailable:
+            return None
+        try:
+            import torch
+
+            self._ensure_pipeline()
+        except ImportError:
+            self._unavailable = True
+            logger.warning("torch/chronos not installed — running without forecast signal")
+            return None
+
         context = torch.tensor(df["close"].values, dtype=torch.float32)
         forecast = self._pipeline.predict(context, self.horizon)
 

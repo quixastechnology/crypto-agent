@@ -54,3 +54,28 @@ class MarketData:
 
     def last_price(self, df: pd.DataFrame) -> float:
         return float(df["close"].iloc[-1])
+
+    def fetch_ohlcv_paginated(self, symbol: str, timeframe: str | None = None, total: int = 1000) -> pd.DataFrame:
+        """Fetch `total` candles by paging backwards past the exchange's
+        per-request cap (MEXC returns at most ~1000 klines per call).
+
+        Without this, `backtest.py BTC/USDT 5000` silently tested on far fewer
+        candles than requested.
+        """
+        timeframe = timeframe or self.config.timeframe
+        tf_ms = self.exchange.parse_timeframe(timeframe) * 1000
+        per_call = 1000
+        since = self.exchange.milliseconds() - total * tf_ms
+        rows: list[list] = []
+        while len(rows) < total:
+            batch = self.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=per_call)
+            if not batch:
+                break
+            rows.extend(batch)
+            since = batch[-1][0] + tf_ms
+            if len(batch) < per_call:
+                break
+        df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        return df.tail(total).reset_index(drop=True)

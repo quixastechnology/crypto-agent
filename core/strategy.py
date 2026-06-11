@@ -55,18 +55,31 @@ class Strategy:
         last = df.iloc[-1]
         ts = int(last["timestamp"])
         price = float(last["close"])
+        high, low = float(last["high"]), float(last["low"])
 
         # 1. Manage an existing position first.
+        #    Order matters in LIVE: send the exchange order BEFORE touching the
+        #    ledger. (The old flow closed the ledger first, so close_market
+        #    found no position and the exchange leg was never closed.)
         if self.portfolio.has_position(symbol):
-            reason = self.portfolio.check_exits(symbol, float(last["high"]), float(last["low"]), ts)
-            if reason and self.config.trade_mode == "LIVE":
-                self.executor.close_market(symbol, price, reason, ts)
-            logger.info("%s: holding position, no new entry", symbol)
+            hit = self.portfolio.peek_exits(symbol, high, low)
+            if hit:
+                reason, exit_price = hit
+                if self.config.trade_mode == "LIVE":
+                    self.executor.close_market(symbol, exit_price, reason, ts)
+                else:
+                    self.portfolio.close_position(symbol, exit_price, reason, ts)
+            else:
+                logger.info("%s: holding position, no new entry", symbol)
             return
 
-        # 2. Assess: structure (cheap) + forecast (Chronos) feed the engine.
+        # 2. Entry guardrails (capital preservation before any assessment).
+        if not self._entry_allowed(symbol, ts):
+            return
+
+        # 3. Assess: structure (cheap) + forecast (Chronos) feed the engine.
         structure = extract_market_structure(df, self.config.structure_window)
-        forecast = self.forecast.predict_bias(df)
+        forecast = self.forecast.predict_bias(df) if self.config.weight_forecast > 0 else None
         ctx = MarketContext(
             symbol=symbol, df=df, price=price, config=self.config,
             structure=structure, forecast=forecast,
@@ -81,9 +94,46 @@ class Strategy:
         if side is None:
             return
 
-        bracket = self.risk.size_position(side, price, self.portfolio.equity)
+        atr = _atr(df, self.config.atr_period) if self.config.use_atr_stops else None
+        bracket = self.risk.size_position(side, price, self.portfolio.equity, atr)
         if bracket is None:
             logger.warning("%s: could not size position", symbol)
             return
 
         self.executor.enter(symbol, bracket, ts)
+
+    def _entry_allowed(self, symbol: str, ts: int) -> bool:
+        """Portfolio-level gates that fire before any signal is computed."""
+        cfg = self.config
+
+        # Daily loss kill switch: stop opening new risk after a bad day.
+        day_start = ts - (ts % 86_400_000)
+        day_pnl = self.portfolio.realized_pnl_since(day_start)
+        if day_pnl <= -abs(cfg.daily_max_loss_pct) * self.portfolio.equity:
+            logger.warning("%s: daily loss limit hit (%.4f) — no new entries today", symbol, day_pnl)
+            return False
+
+        # Concurrency cap: crypto pairs are highly correlated; N open positions
+        # is closer to one big position than N independent bets.
+        if self.portfolio.open_positions_count() >= cfg.max_open_positions:
+            logger.info("%s: max open positions (%d) reached", symbol, cfg.max_open_positions)
+            return False
+
+        # Cooldown after a stop-out: don't immediately re-enter the same chop.
+        last_stop = self.portfolio.last_stop_ts(symbol)
+        if last_stop is not None and ts - last_stop < cfg.cooldown_seconds * 1000:
+            logger.info("%s: in post-stop cooldown", symbol)
+            return False
+        return True
+
+
+def _atr(df, period: int) -> float:
+    """ATR in price units over the dataframe (EWM, matching the volatility signal)."""
+    import pandas as pd
+
+    high, low, close = df["high"], df["low"], df["close"]
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+    return float(tr.ewm(alpha=1 / period, adjust=False).mean().iloc[-1])

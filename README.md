@@ -87,6 +87,26 @@ Switch markets entirely from `.env`:
 - Stop the agent any time with `Ctrl-C`; it finishes the current cycle and exits
   cleanly.
 
+## Analytics
+
+```bash
+python analytics.py                # report on the live/dry-run ledger
+python analytics.py backtest.db    # report on the last backtest
+python analytics.py backtest.db --csv   # also export trades.csv + equity_curve.csv
+```
+
+Reports profit factor, expectancy, max drawdown, per-trade Sharpe, longest
+losing streak, and breakdowns by exit reason and symbol. The go-live bar is not
+"win rate > 50%" — it is profit factor > 1 with a drawdown you can stomach,
+sustained across hundreds of trades.
+
+## Risk guardrails
+
+- `MAX_OPEN_POSITIONS` caps total concurrent positions (correlated exposure).
+- `DAILY_MAX_LOSS_PCT` halts new entries after a bad day (kill switch).
+- `COOLDOWN_SECONDS` blocks immediate re-entry after a stop-out (anti-chop).
+- `USE_ATR_STOPS` switches the fixed % stop to a volatility-adaptive ATR stop.
+
 ## Tests
 
 ```bash

@@ -35,19 +35,36 @@ class RiskManager:
     def __init__(self, config: Config) -> None:
         self.config = config
 
-    def bracket_levels(self, side: str, entry: float) -> tuple[float, float]:
+    def stop_distance(self, entry: float, atr: float | None = None) -> float:
+        """Stop distance in price units: fixed pct, or ATR-scaled when enabled.
+
+        ATR stops adapt to the regime: wide stops in volatile markets (fewer
+        noise stop-outs), tight stops in quiet ones. Clamped to
+        [min_stop_pct, max_stop_pct] of entry so a data glitch can never
+        produce an absurd bracket.
+        """
+        if self.config.use_atr_stops and atr is not None and atr > 0:
+            dist = atr * self.config.atr_stop_mult
+            dist = max(entry * self.config.min_stop_pct, min(dist, entry * self.config.max_stop_pct))
+            return dist
+        return entry * self.config.stop_loss_pct
+
+    def bracket_levels(self, side: str, entry: float, atr: float | None = None) -> tuple[float, float]:
         """Return (stop_loss, take_profit) for a long or short entry."""
-        stop_dist = entry * self.config.stop_loss_pct
+        stop_dist = self.stop_distance(entry, atr)
         tp_dist = stop_dist * self.config.reward_risk_ratio
         if side == "buy":
             return entry - stop_dist, entry + tp_dist
         return entry + stop_dist, entry - tp_dist
 
-    def size_position(self, side: str, entry: float, equity: float) -> Bracket | None:
+    def size_position(self, side: str, entry: float, equity: float, atr: float | None = None) -> Bracket | None:
         """Compute a fully sized bracket, or None if it cannot be placed."""
         risk_amount = equity * self.config.risk_per_trade
+        stop_dist = self.stop_distance(entry, atr)
+        if stop_dist <= 0 or entry <= 0:
+            return None
         # notional such that a full stop loses exactly risk_amount
-        notional = risk_amount / self.config.stop_loss_pct
+        notional = risk_amount * entry / stop_dist
 
         # Cap by deployable capital.
         max_notional = min(self.config.max_budget, equity)
@@ -59,7 +76,7 @@ class RiskManager:
             return None
 
         quantity = notional / entry
-        stop_loss, take_profit = self.bracket_levels(side, entry)
+        stop_loss, take_profit = self.bracket_levels(side, entry, atr)
         return Bracket(
             side=side,
             entry=entry,
