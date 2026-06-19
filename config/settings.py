@@ -87,6 +87,12 @@ class Config:
     daily_max_loss_pct: float = 0.05    # realized daily loss >= this fraction of equity -> halt entries
     cooldown_seconds: int = 3600        # no re-entry on a symbol this long after a stop-out
 
+    # --- Signal / advisory mode (no execution; just alerts the pair to trade) ---
+    telegram_bot_token: str = ""        # from @BotFather; empty = console only
+    telegram_chat_id: str = ""          # your chat/channel id
+    signal_alert_on: str = "go"         # "go" = only actionable GO LONG/SHORT; "all" = also NO-GO changes
+    signal_repeat_minutes: int = 0      # 0 = alert only when the call changes; >0 = also re-alert every N min
+
     derived: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -177,4 +183,8 @@ def load_config() -> Config:
         max_open_positions=_get_int("MAX_OPEN_POSITIONS", 2),
         daily_max_loss_pct=_get_float("DAILY_MAX_LOSS_PCT", 0.05),
         cooldown_seconds=_get_int("COOLDOWN_SECONDS", 3600),
+        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+        signal_alert_on=os.getenv("SIGNAL_ALERT_ON", "go").lower(),
+        signal_repeat_minutes=_get_int("SIGNAL_REPEAT_MINUTES", 0),
     )

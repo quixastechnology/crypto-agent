@@ -141,6 +141,38 @@ def test_engine_structure_gate_blocks_counter_trend_long():
         assert a.action == "FLAT"
 
 
+def test_signal_format_and_dedup():
+    from core.decision import Assessment
+    from core.risk import RiskManager
+    from core.signaler import SignalService
+    from core.signals.base import SignalScore
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = _config(os.path.join(d, "t.db"))
+        sent = []
+
+        class _Notifier:
+            def send(self, text):
+                sent.append(text)
+
+        svc = SignalService(cfg, market=None, forecast=None, risk=RiskManager(cfg),
+                            engine=None, notifier=_Notifier())
+
+        go = Assessment("LONG", 0.4, 0.6, 0.55, 0.018, -0.01, "GO LONG: ...",
+                        [SignalScore("structure", 1.0, 0.9, "HH+HL uptrend")])
+        msg = svc._format("BTC/USDT", 100.0, go)
+        assert "GO LONG" in msg and "Entry:" in msg and "Stop:" in msg and "Target:" in msg
+        # 2% stop, 2.5 RR -> stop 98, target 105
+        assert "98." in msg and "105." in msg
+
+        # First GO alerts; identical GO again is suppressed (no repeat interval).
+        assert svc._should_alert("BTC/USDT", "LONG", ts=1000) is True
+        svc._last_action["BTC/USDT"] = "LONG"; svc._last_sent_ms["BTC/USDT"] = 1000
+        assert svc._should_alert("BTC/USDT", "LONG", ts=2000) is False
+        # Flipping to NO-GO after an active GO should alert.
+        assert svc._should_alert("BTC/USDT", "FLAT", ts=3000) is True
+
+
 def test_portfolio_blocks_double_entry_and_resolves_stop():
     with tempfile.TemporaryDirectory() as d:
         cfg = _config(os.path.join(d, "t.db"))

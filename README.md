@@ -60,7 +60,30 @@ pip install -r requirements.txt          # omit torch/chronos to run structure-o
 cp .env.example .env                     # then fill in keys and tune params
 ```
 
-## Run
+## Signal mode (advisory only — recommended start)
+
+Runs the full analysis and **alerts you which pair to trade**, but never places
+an order. No MEXC API key needed (market data is public). You place the trade.
+
+```bash
+python signal_bot.py
+```
+
+Each alert is a full setup, e.g.:
+```
+🟢 GO LONG — BTC/USDT (15m)
+Entry:  63,203.31
+Stop:   61,939.24 (-2.00%)
+Target: 66,363.48 (+5.00%)  R:R 2.5
+Conviction 0.40 | EV +1.53% | p_up 0.53
+Why:
+ • momentum: RSI 64, MACD-hist +0.113% (+0.42)
+```
+Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env` to get alerts on your
+phone (see `core/notifier.py`); leave them empty for console-only. It only pings
+when the call changes, so you are not spammed with the same setup every cycle.
+
+## Run (trading modes)
 
 ```bash
 # Validate on history first (seconds, not weeks):
