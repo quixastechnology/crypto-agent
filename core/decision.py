@@ -85,16 +85,24 @@ class DecisionEngine:
         # ensemble decides and structure only contributes via its weight).
         allowed = self._allowed_directions(ctx)
 
+        # A direction is only a candidate if the model actually leans that way.
+        # Without this, a long-only spot config + high reward:risk would label
+        # almost everything "GO LONG" even when p_up < 0.5 (leaning down).
+        edge = self.config.min_prob_edge
         candidates = []
-        if "LONG" in allowed:
+        if "LONG" in allowed and p_up >= 0.5 + edge:
             candidates.append(("LONG", ev_long))
-        if "SHORT" in allowed:
+        if "SHORT" in allowed and p_up <= 0.5 - edge:
             candidates.append(("SHORT", ev_short))
 
         # Pick the highest-EV direction available, then apply the GO bar.
         if not candidates:
             action, best_ev = "FLAT", 0.0
-            reason = "NO-GO: no direction allowed (structure gate blocked all paths)"
+            # Distinguish "no directional lean" from "structure gated everything".
+            if allowed:
+                reason = f"NO-GO: no directional edge (p_up {p_up:.2f}, needs >={0.5 + edge:.2f} long)"
+            else:
+                reason = "NO-GO: no direction allowed (structure gate blocked all paths)"
         else:
             best_dir, best_ev = max(candidates, key=lambda c: c[1])
             if best_ev < self.config.min_expected_value:

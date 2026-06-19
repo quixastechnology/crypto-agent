@@ -54,26 +54,58 @@ class SignalService:
         self._last_action: dict[str, str] = {}
         self._last_sent_ms: dict[str, int] = {}
 
-    def run_symbol(self, symbol: str) -> None:
+    def _assess(self, symbol: str):
+        """Run the engine on the last closed candle. Returns (ts, price, Assessment) or None."""
         df = self.market.fetch_ohlcv(symbol)
         if len(df) < self.config.structure_window * 2 + 3:
-            return
+            return None
         # Decide on the last CLOSED candle.
         df = df.iloc[:-1].reset_index(drop=True)
         last = df.iloc[-1]
         ts = int(last["timestamp"])
         price = float(last["close"])
-
         structure = extract_market_structure(df, self.config.structure_window)
         forecast = self.forecast.predict_bias(df) if self.config.weight_forecast > 0 else None
         ctx = MarketContext(symbol=symbol, df=df, price=price, config=self.config,
                             structure=structure, forecast=forecast)
-        assessment = self.engine.assess(ctx)
+        return ts, price, self.engine.assess(ctx)
 
+    def run_symbol(self, symbol: str) -> None:
+        res = self._assess(symbol)
+        if res is None:
+            return
+        ts, price, assessment = res
         if self._should_alert(symbol, assessment.action, ts):
             self.notifier.send(self._format(symbol, price, assessment))
             self._last_action[symbol] = assessment.action
             self._last_sent_ms[symbol] = ts
+
+    def build_digest(self, symbols: list[str], date_label: str = "") -> str:
+        """Assess every symbol once and return a single combined daily message."""
+        header = f"📊 Crypto Signals {date_label} ({self.config.timeframe})".rstrip()
+        gos: list[str] = []
+        nogos: list[str] = []
+        for symbol in symbols:
+            res = self._assess(symbol)
+            if res is None:
+                continue
+            _, price, a = res
+            if a.action in ("LONG", "SHORT"):
+                side = "buy" if a.action == "LONG" else "sell"
+                stop, target = self.risk.bracket_levels(side, price)
+                sp = (stop - price) / price * 100
+                tp = (target - price) / price * 100
+                gos.append(
+                    f"{_ARROW[a.action]}  {symbol}\n"
+                    f"   entry {_fmt_price(price)} | stop {_fmt_price(stop)} ({sp:+.1f}%) | "
+                    f"tgt {_fmt_price(target)} ({tp:+.1f}%) | conv {a.conviction:.2f}"
+                )
+            else:
+                nogos.append(f"⚪ NO-GO  {symbol}")
+        body = gos + ([""] + nogos if nogos else [])
+        if not gos and not nogos:
+            body = ["No data available."]
+        return header + "\n\n" + "\n".join(body) + "\n\nNot financial advice. You place the trade."
 
     def _should_alert(self, symbol: str, action: str, ts: int) -> bool:
         prev = self._last_action.get(symbol)
