@@ -153,7 +153,7 @@ def load_config() -> Config:
         weight_volatility=_get_float("WEIGHT_VOLATILITY", 0.05),
         weight_sentiment=_get_float("WEIGHT_SENTIMENT", 0.15),
         weight_news=_get_float("WEIGHT_NEWS", 0.05),
-        require_structure_alignment=_get_bool("REQUIRE_STRUCTURE_ALIGNMENT", True),
+        require_structure_alignment=_get_bool("REQUIRE_STRUCTURE_ALIGNMENT", False),
         min_conviction=_get_float("MIN_CONVICTION", 0.35),
         min_expected_value=_get_float("MIN_EXPECTED_VALUE", 0.001),
         rsi_period=_get_int("RSI_PERIOD", 14),

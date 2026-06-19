@@ -90,24 +90,37 @@ class Executor:
             return False
 
     def _attach_exits(self, symbol: str, bracket: Bracket) -> None:
-        """Attach protective stop and take-profit orders for a live position."""
+        """Attach protective stop and take-profit orders for a live position.
+
+        MEXC spot supports stop_market but NOT take_profit_market (verified via
+        ccxt.has), so the take-profit is placed as a plain limit order at the
+        target price. Each leg is attached independently: if one order type is
+        rejected, the other still stands and the poll loop manages the rest.
+        """
         ex = self.market.exchange
         exit_side = "sell" if bracket.side == "buy" else "buy"
         amount = bracket.quantity
+        reduce_only = self.config.market_type == "futures"
+
+        # Stop loss (trigger order).
         try:
             ex.create_order(
                 symbol=symbol, type="stop_market", side=exit_side, amount=amount,
-                params={"stopPrice": bracket.stop_loss, "reduceOnly": self.config.market_type == "futures"},
+                params={"stopPrice": bracket.stop_loss, "reduceOnly": reduce_only},
             )
-            ex.create_order(
-                symbol=symbol, type="take_profit_market", side=exit_side, amount=amount,
-                params={"stopPrice": bracket.take_profit, "reduceOnly": self.config.market_type == "futures"},
-            )
-            logger.info("Attached SL %.4f / TP %.4f for %s", bracket.stop_loss, bracket.take_profit, symbol)
+            logger.info("Attached stop_market SL %.6f for %s", bracket.stop_loss, symbol)
         except Exception as exc:
-            # If the venue rejects native brackets, the loop still tracks the
-            # position and check_exits() can close it at market as a fallback.
-            logger.warning("Could not attach native bracket for %s (%s); loop will manage exits", symbol, exc)
+            logger.warning("Could not attach stop for %s (%s); loop will manage exit", symbol, exc)
+
+        # Take profit (limit order at target; take_profit_market is unsupported on MEXC spot).
+        try:
+            ex.create_order(
+                symbol=symbol, type="limit", side=exit_side, amount=amount,
+                price=bracket.take_profit, params={"reduceOnly": reduce_only},
+            )
+            logger.info("Attached limit TP %.6f for %s", bracket.take_profit, symbol)
+        except Exception as exc:
+            logger.warning("Could not attach take-profit for %s (%s); loop will manage exit", symbol, exc)
 
     # --- exit (live fallback) ------------------------------------------
     def close_market(self, symbol: str, price: float, reason: str, ts: int) -> None:

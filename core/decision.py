@@ -57,7 +57,7 @@ class DecisionEngine:
         vetoed = [s for s in scores if s.veto]
         if vetoed:
             reason = "; ".join(s.rationale for s in vetoed)
-            return Assessment("FLAT", 0.0, 0.5, 0.0, 0.0, 0.0, f"veto: {reason}", scores)
+            return Assessment("FLAT", 0.0, 0.5, 0.0, 0.0, 0.0, f"NO-GO (veto): {reason}", scores)
 
         # Weighted, confidence-scaled blend.
         num = 0.0
@@ -81,7 +81,8 @@ class DecisionEngine:
         ev_long = p_up * win - (1 - p_up) * loss - cost
         ev_short = (1 - p_up) * win - p_up * loss - cost
 
-        # Direction permitted by structure (gate), unless disabled.
+        # Directions allowed (structure gate is optional; by default the EV
+        # ensemble decides and structure only contributes via its weight).
         allowed = self._allowed_directions(ctx)
 
         candidates = []
@@ -90,21 +91,27 @@ class DecisionEngine:
         if "SHORT" in allowed:
             candidates.append(("SHORT", ev_short))
 
-        action, best_ev = ("FLAT", 0.0)
-        if candidates:
-            action, best_ev = max(candidates, key=lambda c: c[1])
-
-        if action != "FLAT" and (
-            best_ev < self.config.min_expected_value or conviction < self.config.min_conviction
-        ):
-            reason = (f"best {action} EV {best_ev * 100:+.3f}% / conviction {conviction:.2f} "
-                      f"below thresholds")
-            action = "FLAT"
+        # Pick the highest-EV direction available, then apply the GO bar.
+        if not candidates:
+            action, best_ev = "FLAT", 0.0
+            reason = "NO-GO: no direction allowed (structure gate blocked all paths)"
         else:
-            reason = f"{action} chosen: EV {best_ev * 100:+.3f}%, conviction {conviction:.2f}, p_up {p_up:.2f}"
+            best_dir, best_ev = max(candidates, key=lambda c: c[1])
+            if best_ev < self.config.min_expected_value:
+                action = "FLAT"
+                reason = (f"NO-GO: best path {best_dir} EV {best_ev * 100:+.3f}% "
+                          f"below min {self.config.min_expected_value * 100:.3f}%")
+            elif conviction < self.config.min_conviction:
+                action = "FLAT"
+                reason = (f"NO-GO: {best_dir} EV {best_ev * 100:+.3f}% ok, but conviction "
+                          f"{conviction:.2f} below min {self.config.min_conviction:.2f}")
+            else:
+                action = best_dir
+                reason = (f"GO {best_dir}: EV {best_ev * 100:+.3f}%, conviction {conviction:.2f}, "
+                          f"p_up {p_up:.2f}")
 
-        logger.info("assessment %s | composite %.2f p_up %.2f conv %.2f EV(L/S) %.3f%%/%.3f%%",
-                    action, composite, p_up, conviction, ev_long * 100, ev_short * 100)
+        logger.info("assessment %s | composite %.2f p_up %.2f conv %.2f EV(L/S) %.3f%%/%.3f%% | %s",
+                    action, composite, p_up, conviction, ev_long * 100, ev_short * 100, reason)
         return Assessment(action, composite, p_up, conviction, ev_long, ev_short, reason, scores)
 
     def _allowed_directions(self, ctx: MarketContext) -> set[str]:

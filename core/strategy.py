@@ -48,10 +48,13 @@ class Strategy:
 
     def run_symbol(self, symbol: str) -> None:
         df = self.market.fetch_ohlcv(symbol)
-        if len(df) < self.config.structure_window * 2 + 2:
+        if len(df) < self.config.structure_window * 2 + 3:
             logger.info("%s: not enough candles yet", symbol)
             return
 
+        # Decide on the last CLOSED candle, not the in-progress one (which
+        # repaints). Drop the final forming candle before any analysis.
+        df = df.iloc[:-1].reset_index(drop=True)
         last = df.iloc[-1]
         ts = int(last["timestamp"])
         price = float(last["close"])
