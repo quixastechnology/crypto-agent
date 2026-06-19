@@ -62,7 +62,7 @@ def _config(tmpdb, **overrides):
         weight_structure=0.30, weight_forecast=0.25, weight_momentum=0.20,
         weight_volatility=0.05, weight_sentiment=0.15, weight_news=0.0,
         require_structure_alignment=True, min_conviction=0.35,
-        min_expected_value=0.001, rsi_period=14, macd_fast=12, macd_slow=26,
+        min_expected_value=0.001, min_prob_edge=0.02, rsi_period=14, macd_fast=12, macd_slow=26,
         macd_signal=9, atr_period=14, atr_max_pct=0.05,
         fear_greed_url="", fear_greed_contrarian=True, enable_news_sentiment=False,
         news_model="x", news_rss_urls=[], news_max_headlines=20,
