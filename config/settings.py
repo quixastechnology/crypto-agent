@@ -57,6 +57,7 @@ class Config:
     require_structure_alignment: bool   # structure gates trade direction
     min_conviction: float               # min aggregate confidence to trade
     min_expected_value: float           # min EV (fraction of price) to trade
+    min_prob_edge: float                # directional lean required: LONG needs p_up>=0.5+edge
 
     # --- Momentum / volatility params ---
     rsi_period: int
@@ -162,6 +163,7 @@ def load_config() -> Config:
         require_structure_alignment=_get_bool("REQUIRE_STRUCTURE_ALIGNMENT", False),
         min_conviction=_get_float("MIN_CONVICTION", 0.35),
         min_expected_value=_get_float("MIN_EXPECTED_VALUE", 0.001),
+        min_prob_edge=_get_float("MIN_PROB_EDGE", 0.02),
         rsi_period=_get_int("RSI_PERIOD", 14),
         macd_fast=_get_int("MACD_FAST", 12),
         macd_slow=_get_int("MACD_SLOW", 26),
